@@ -27,6 +27,10 @@ MAX_SQLITE_INT = 2**63 - 1
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # Allow letters, digits, dash, underscore and dot in SKUs (e.g. "ELEC-001").
 SKU_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+# Money sent as text must be a plain decimal such as "12", "12.50" or ".5".
+# Decimal() would also accept "1e3" or "Infinity"; a typo like "1e3" silently
+# becoming 1000.00 is exactly the kind of surprise we want to refuse.
+PLAIN_NUMBER_RE = re.compile(r"^-?(\d+\.?\d*|\.\d+)$")
 
 
 def get_json_body():
@@ -149,6 +153,9 @@ def parse_price(data, field, errors, *, required=False, default=None):
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         errors.add(field, "Must be a number.")
         return default
+    if isinstance(value, str) and not PLAIN_NUMBER_RE.match(value.strip()):
+        errors.add(field, "Must be a number.")
+        return default
     try:
         amount = Decimal(str(value).strip())
     except InvalidOperation:
@@ -163,6 +170,8 @@ def parse_price(data, field, errors, *, required=False, default=None):
     if amount > MAX_PRICE:
         errors.add(field, f"Must be at most {MAX_PRICE}.")
         return default
+    if amount == 0:
+        amount = Decimal("0")  # "-0" would otherwise be stored as -0.0
     # ROUND_HALF_UP is what people expect for money (12.345 -> 12.35); the
     # Decimal default would be banker's rounding (12.345 -> 12.34).
     return float(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
