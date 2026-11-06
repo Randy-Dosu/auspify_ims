@@ -19,3 +19,6 @@ backend/instance/
 *.db
 *.db-wal
 *.db-shm
+
+# ---- Test caches ----
+.pytest_cache/
