@@ -420,4 +420,4 @@ Full details, the manual E2E checklist and the edge-case matrix:
 | 3 | `65d2668` | Reports API, dashboard and reports pages with charts and CSV export |
 | 4 | `d06eb32` | Search, filters, sorting, pagination (API + UI); stock picker made search-driven |
 | 5 | `ff63a21` | pytest suite, security tests, data-integrity audit, stricter price parsing |
-| — | `6db3f12` | Final README and testing guide |
+| — | `af0d634` (amended) | Final README and testing guide |
