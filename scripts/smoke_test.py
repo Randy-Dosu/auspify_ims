@@ -20,6 +20,7 @@ import json
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # --------------------------------------------------------------------------- #
@@ -88,6 +89,21 @@ class Checker:
         print(f"\n--- {title} ---")
 
 
+def all_products(c):
+    """
+    Collect EVERY product by walking the paginated list endpoint (Step 4 added
+    pagination, so a single GET /api/products only returns one page).
+    """
+    items, page = [], 1
+    while True:
+        status, _, body = c.get(f"/api/products?per_page=100&page={page}")
+        assert status == 200, (status, body)
+        items.extend(body["items"])
+        if page >= body.get("total_pages", 1):
+            return items, body["total"]
+        page += 1
+
+
 def _h(headers, name):
     """Case-insensitive header lookup."""
     for key, value in headers.items():
@@ -123,8 +139,8 @@ def step1(c, k):
         _cleanup(c, created)
         # Verify the cleanup itself so the dev database stays tidy.
         k.section("Step 1: cleanup")
-        status, _, body = c.get("/api/products")
-        leftovers = [p for p in body["items"] if p["sku"].startswith("SMOKE")] if status == 200 else ["?"]
+        status, _, body = c.get("/api/products?search=SMOKE&per_page=100")
+        leftovers = [p["sku"] for p in body["items"]] if status == 200 else ["?"]
         k.check("All SMOKE test records removed", status == 200 and not leftovers, leftovers)
 
 
@@ -145,9 +161,11 @@ def _step1_functional(c, k, tag, created):
     k.check("GET /api/suppliers -> 200 with >= 3 suppliers", s == 200 and len(sups["items"]) >= 3, sups)
     s, _, prods = c.get("/api/products")
     k.check("GET /api/products -> 200 with >= 20 products", s == 200 and prods["total"] >= 20, prods and prods.get("total"))
-    k.check("products: total == len(items)", prods["total"] == len(prods["items"]))
+    everything, total = all_products(c)
+    k.check("walking all pages yields exactly `total` products with unique ids",
+            len(everything) == total and len({p["id"] for p in everything}) == total, (len(everything), total))
     k.check("products include joined category_name & supplier_name",
-            all("category_name" in p and "supplier_name" in p for p in prods["items"]))
+            all("category_name" in p and "supplier_name" in p for p in everything))
 
     k.section("Step 1: category CRUD")
     s, _, cat = c.post("/api/categories", {"name": f"SMOKE Category {tag}"})
@@ -219,7 +237,7 @@ def _step1_functional(c, k, tag, created):
     k.check("updated_at changed after update", upd["updated_at"] >= prod["updated_at"])
     s, _, body = c.put(f"/api/products/{prod['id']}", {"quantity_in_stock": 99})
     k.check("PUT quantity_in_stock directly -> 400 (must use stock movements)", s == 400 and "quantity_in_stock" in body.get("details", {}), (s, body))
-    seeded_sku = [p for p in c.get("/api/products")[2]["items"] if not p["sku"].startswith("SMOKE")][0]["sku"]
+    seeded_sku = [p for p in all_products(c)[0] if not p["sku"].startswith("SMOKE")][0]["sku"]
     s, _, body = c.put(f"/api/products/{prod['id']}", {"sku": seeded_sku})
     k.check("PUT sku to one that already exists -> 409", s == 409, (s, body))
     s, _, body = c.get("/api/products/999999")
@@ -449,9 +467,8 @@ def _step2_badges(c, k, tag, created):
     k.check("qty 4 (> reorder level) -> 'in_stock'", body["product"]["stock_status"] == "in_stock", body["product"]["stock_status"])
     s, _, body = c.put(f"/api/products/{pid}", {"reorder_level": 10})
     k.check("raising reorder_level to 10 -> 'low' again", body["stock_status"] == "low", body)
-    s, _, body = c.get("/api/products")
-    k.check("every product in the list carries a stock_status",
-            all(p.get("stock_status") in ("in_stock", "low", "out") for p in body["items"]))
+    k.check("every product (all pages) carries a stock_status",
+            all(p.get("stock_status") in ("in_stock", "low", "out") for p in all_products(c)[0]))
 
 
 def _step2_concurrency(c, k, tag, created):
@@ -515,7 +532,7 @@ def step3(c, k):
     created = {"products": [], "categories": [], "suppliers": []}
     try:
         k.section("Step 3: summary matches independent calculation")
-        products = c.get("/api/products")[2]["items"]
+        products, _ = all_products(c)
         s, _, summ = c.get("/api/reports/summary")
         k.check("GET /api/reports/summary -> 200", s == 200, (s, summ))
         exp_units = sum(p["quantity_in_stock"] for p in products)
@@ -625,7 +642,123 @@ def step3(c, k):
 
 
 # --------------------------------------------------------------------------- #
-STEPS = {0: step0, 1: step1, 2: step2, 3: step3}
+# Step 4: search, filtering, sorting, pagination
+# --------------------------------------------------------------------------- #
+
+
+def step4(c, k):
+    tag = str(int(time.time()))[-6:]
+    created = {"products": [], "categories": [], "suppliers": []}
+    try:
+        # Known data: one private category/supplier with three products.
+        cat = c.post("/api/categories", {"name": f"SMOKE Filter Cat {tag}"})[2]
+        sup = c.post("/api/suppliers", {"name": f"SMOKE Filter Sup {tag}"})[2]
+        created["categories"].append(cat["id"])
+        created["suppliers"].append(sup["id"])
+        specs = [
+            (f"SMK-F1-{tag}", "Zeta Filter Alpha", 5.00, 0, 5),      # out
+            (f"SMK-F2-{tag}", "zeta filter BETA", 50.00, 2, 5),      # low
+            (f"SMK-F3-{tag}", "Gamma 100% Thing", 500.00, 50, 5),    # in_stock
+        ]
+        ids = []
+        for sku, name, price, qty, reorder in specs:
+            s, _, p = c.post("/api/products", {"sku": sku, "name": name, "unit_price": price, "quantity_in_stock": qty,
+                                               "reorder_level": reorder, "category_id": cat["id"], "supplier_id": sup["id"]})
+            ids.append(p["id"])
+            created["products"].append(p["id"])
+        cid, sid = cat["id"], sup["id"]
+
+        def skus(query):
+            s, _, body = c.get(f"/api/products?{query}")
+            return s, body, ([p["sku"] for p in body["items"]] if s == 200 else None)
+
+        k.section("Step 4: each filter alone")
+        s, body, got = skus(f"search=ZETA&category={cid}")
+        k.check("search is case-insensitive and partial on name ('ZETA' -> 2)", s == 200 and body["total"] == 2 and set(got) == {specs[0][0], specs[1][0]}, (s, got))
+        s, body, got = skus(f"search=f2-{tag}")
+        k.check("search matches partial SKU", s == 200 and got == [specs[1][0]], (s, got))
+        s, body, got = skus(f"search=filter%20alpha&category={cid}")
+        k.check("search with a space matches the phrase ('filter alpha' -> 1)", s == 200 and got == [specs[0][0]], (s, got))
+        s, body, got = skus(f"category={cid}")
+        k.check("category filter -> exactly the 3 products", s == 200 and body["total"] == 3, (s, body.get("total")))
+        s, body, got = skus(f"supplier={sid}")
+        k.check("supplier filter -> exactly the 3 products", s == 200 and body["total"] == 3, (s, body.get("total")))
+        for status, expected in (("out", specs[0][0]), ("low", specs[1][0]), ("in_stock", specs[2][0])):
+            s, body, got = skus(f"category={cid}&stock_status={status}")
+            k.check(f"stock_status={status} -> {expected}", s == 200 and got == [expected], (s, got))
+        s, body, got = skus(f"category={cid}&min_price=10")
+        k.check("min_price=10 -> prices 50 and 500", s == 200 and set(got) == {specs[1][0], specs[2][0]}, (s, got))
+        s, body, got = skus(f"category={cid}&max_price=50")
+        k.check("max_price=50 -> prices 5 and 50 (inclusive)", s == 200 and set(got) == {specs[0][0], specs[1][0]}, (s, got))
+        s, body, got = skus(f"category={cid}&min_price=10&max_price=100")
+        k.check("min_price=10 & max_price=100 -> only 50", s == 200 and got == [specs[1][0]], (s, got))
+
+        k.section("Step 4: combined filters")
+        s, body, got = skus(f"search=zeta&category={cid}&supplier={sid}&stock_status=low&min_price=1&max_price=100")
+        k.check("search + category + supplier + status + price range together -> 1", s == 200 and got == [specs[1][0]], (s, got))
+        s, body, got = skus(f"search=zeta&stock_status=in_stock&category={cid}")
+        k.check("contradictory combination -> 0 results, 200", s == 200 and body["total"] == 0 and got == [], (s, body))
+
+        k.section("Step 4: sorting")
+        s, body, got = skus(f"category={cid}&sort=unit_price&order=asc")
+        k.check("sort=unit_price asc", got == [specs[0][0], specs[1][0], specs[2][0]], got)
+        s, body, got = skus(f"category={cid}&sort=unit_price&order=desc")
+        k.check("sort=unit_price desc", got == [specs[2][0], specs[1][0], specs[0][0]], got)
+        s, body, got = skus(f"category={cid}&sort=quantity_in_stock&order=desc")
+        k.check("sort=quantity_in_stock desc", got == [specs[2][0], specs[1][0], specs[0][0]], got)
+        s, body, got = skus(f"category={cid}&sort=name&order=asc")
+        k.check("sort=name asc is case-insensitive (Gamma, Zeta..Alpha, zeta..BETA)", got == [specs[2][0], specs[0][0], specs[1][0]], got)
+        s, body, _ = skus("sort=category&order=desc")
+        k.check("sort=category (joined column) works", s == 200, (s, body))
+        s, body, _ = skus("sort=unit_price")
+        k.check("default order is asc", s == 200 and body["order"] == "asc", body.get("order"))
+
+        k.section("Step 4: pagination")
+        s, body, got = skus(f"category={cid}&per_page=2&page=1&sort=sku")
+        k.check("per_page=2 page=1 -> 2 items, total 3, total_pages 2",
+                s == 200 and len(got) == 2 and body["total"] == 3 and body["total_pages"] == 2 and body["page"] == 1, body)
+        s, body2, got2 = skus(f"category={cid}&per_page=2&page=2&sort=sku")
+        k.check("page=2 -> the remaining 1 item, no overlap with page 1", len(got2) == 1 and not set(got) & set(got2), (got, got2))
+        s, body3, got3 = skus(f"category={cid}&per_page=2&page=3&sort=sku")
+        k.check("page beyond the end -> 200 with empty items (total still 3)", s == 200 and got3 == [] and body3["total"] == 3, (s, body3))
+        s, body, got = skus("per_page=100")
+        k.check("per_page=100 (maximum) accepted", s == 200 and body["per_page"] == 100, (s, body.get("per_page")))
+        s, body, got = skus("")
+        k.check("defaults: page 1, per_page 20, total counts ALL products", s == 200 and body["page"] == 1 and body["per_page"] == 20 and body["total"] >= 25 and len(got) == 20, body)
+
+        k.section("Step 4: invalid parameters handled safely")
+        for query, field in [("page=0", "page"), ("page=abc", "page"), ("page=-1", "page"), ("per_page=0", "per_page"),
+                             ("per_page=101", "per_page"), ("per_page=1e9", "per_page"), ("sort=evil", "sort"),
+                             ("sort=p.name;DROP%20TABLE%20products;--", "sort"), ("order=sideways", "order"),
+                             ("stock_status=bogus", "stock_status"), ("min_price=abc", "min_price"), ("min_price=-1", "min_price"),
+                             ("min_price=100&max_price=10", "min_price"), ("category=abc", "category"), ("category=0", "category"),
+                             ("supplier=1%20OR%201=1", "supplier"), ("search=" + "x" * 101, "search"), ("page=99999999999999999999", "page")]:
+            s, _, body = c.get(f"/api/products?{query}")
+            k.check(f"?{query[:40]} -> 400 naming '{field}'", s == 400 and field in (body.get("details") or {}), (s, body))
+
+        k.section("Step 4: security - injection through search")
+        total_before = c.get("/api/products")[2]["total"]
+        for payload in ["' OR 1=1 --", "%' OR '1'='1", "\\'; DROP TABLE products; --", "' UNION SELECT 1,2,3 --"]:
+            s, _, body = c.get("/api/products?search=" + urllib.parse.quote(payload))
+            k.check(f"search={payload[:22]!r} -> 200 with 0 results (treated as text)", s == 200 and body["total"] == 0, (s, body.get("total")))
+        k.check("products table intact after injection attempts", c.get("/api/products")[2]["total"] == total_before)
+        s, body, got = skus("search=100%25")
+        k.check("search '100%' matches the literal text (wildcard escaped)", s == 200 and got == [specs[2][0]], (s, got))
+        s, body, got = skus("search=%25")
+        k.check("search '%' alone matches only names/SKUs containing a literal '%' (not everything)",
+                s == 200 and body["total"] < total_before and all("%" in (p["name"] + p["sku"]) for p in body["items"]), (s, got))
+        s, body, got = skus("search=_")
+        k.check("search '_' matches only names/SKUs containing '_'", s == 200 and all("_" in (p["name"] + p["sku"]) for p in body["items"]), (s, got))
+        s, body, got = skus("search=%3Cscript%3E")
+        k.check("search '<script>' -> 200, 0 results, nothing reflected unescaped", s == 200 and body["total"] == 0, (s, body))
+    finally:
+        _cleanup(c, created)
+
+
+
+
+# --------------------------------------------------------------------------- #
+STEPS = {0: step0, 1: step1, 2: step2, 3: step3, 4: step4}
 
 
 def main():

@@ -96,7 +96,7 @@ function ProductForm({ product, categories, suppliers, onSubmit, onCancel, serve
   }
 
   return (
-    <form className="card form" onSubmit={handleSubmit} noValidate>
+    <form className="card form" onSubmit={handleSubmit} noValidate aria-label="Product form">
       <h2>{isEdit ? `Edit product: ${product.sku}` : 'Add product'}</h2>
 
       <div className="form-grid">

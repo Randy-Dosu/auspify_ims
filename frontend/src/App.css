@@ -503,3 +503,71 @@
   color: #6b7280;
   border-top: 1px solid #f3f4f6;
 }
+
+/* ---- Filters, sorting, pagination (Step 4) -------------------------------- */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-end;
+  padding: 1rem 1.25rem;
+}
+
+.filters .field {
+  flex: 1 1 150px;
+}
+
+.filters .filter-search {
+  flex: 2 1 220px;
+}
+
+.filters .filter-price {
+  flex: 0 1 110px;
+}
+
+.filters .filter-actions {
+  flex: 0 0 auto;
+}
+
+.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable:hover {
+  color: #2563eb;
+}
+
+.sort-indicator {
+  font-size: 0.7rem;
+  margin-left: 0.25rem;
+  color: #2563eb;
+}
+
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.pagination select {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.results-count {
+  margin: 0 0 0.75rem;
+  color: #374151;
+}

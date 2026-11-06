@@ -2,8 +2,8 @@
 
 Inventory Management System — Python Flask + React (Vite) + SQLite.
 
-> Project status: **Step 3 (reports)** - summary, low-stock, valuation, movements
-> and top-movers reports with charts and CSV export. Features are added step by step; the
+> Project status: **Step 4 (search & filtering)** - search, filters, sorting and
+> pagination on the products list (API + UI). Features are added step by step; the
 > README is completed at the end of the project.
 
 ## Project layout

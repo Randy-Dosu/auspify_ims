@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api/client'
+import DebouncedInput from './DebouncedInput'
 import StockBadge from './StockBadge'
 
 /**
@@ -11,6 +12,9 @@ import StockBadge from './StockBadge'
  *   productId   currently selected product id ('' when none)
  *   onProductChange(id)
  *   onSuccess(result)   called with the API response {transaction, product}
+ *   search / onSearchChange / totalMatches / matchesShown
+ *               the picker is fed by the paginated products API, so a small
+ *               search box narrows the dropdown (max 100 options at a time)
  */
 const MODES = {
   in: {
@@ -36,7 +40,17 @@ const MODES = {
   },
 }
 
-function StockForm({ mode, products, productId, onProductChange, onSuccess }) {
+function StockForm({
+  mode,
+  products,
+  productId,
+  onProductChange,
+  onSuccess,
+  search = '',
+  onSearchChange,
+  totalMatches = 0,
+  matchesShown = products.length,
+}) {
   const config = MODES[mode]
   const [quantity, setQuantity] = useState('')
   const [reason, setReason] = useState(config.defaultReason)
@@ -95,6 +109,17 @@ function StockForm({ mode, products, productId, onProductChange, onSuccess }) {
       <div className="form-grid">
         <div className="field field-wide">
           <label htmlFor={`${mode}-product`}>Product *</label>
+          {onSearchChange && (
+            <DebouncedInput
+              id={`${mode}-product-search`}
+              type="search"
+              placeholder="Filter products by name or SKU…"
+              aria-label="Filter products"
+              value={search}
+              onCommit={onSearchChange}
+              maxLength={100}
+            />
+          )}
           <select
             id={`${mode}-product`}
             value={productId}
@@ -108,6 +133,11 @@ function StockForm({ mode, products, productId, onProductChange, onSuccess }) {
             ))}
           </select>
           {errors.product_id && <span className="error-text">{errors.product_id}</span>}
+          {totalMatches > matchesShown && (
+            <span className="hint">
+              Showing {matchesShown} of {totalMatches} products — type to narrow the list.
+            </span>
+          )}
           {selected && (
             <span className="hint">
               Current stock: <strong>{selected.quantity_in_stock}</strong> · reorder level{' '}

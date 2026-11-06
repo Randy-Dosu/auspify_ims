@@ -25,13 +25,23 @@ function StockMovements() {
   const productId = searchParams.get('product') || ''
   const [mode, setMode] = useState('in')
   const [message, setMessage] = useState(null)
+  const [pickerSearch, setPickerSearch] = useState('')
 
-  const products = useApi('/products')
+  // The products API is paginated, so the picker loads at most 100 matches
+  // (sorted by SKU) and offers a search box to narrow them down.
+  const pickerQuery = new URLSearchParams({ per_page: '100', sort: 'sku' })
+  if (pickerSearch) pickerQuery.set('search', pickerSearch)
+  const products = useApi(`/products?${pickerQuery.toString()}`)
+  // The selected product is loaded on its own so a deep link (?product=ID)
+  // works even when that product is not in the current picker results.
+  const selectedProduct = useApi(productId ? `/products/${productId}` : null)
   const history = useApi(productId ? `/products/${productId}/transactions?limit=100` : null)
   const recent = useApi('/stock/transactions?limit=25')
 
-  const productList = products.data ? products.data.items : []
-  const selected = productList.find((p) => String(p.id) === productId)
+  const selected = selectedProduct.data
+  const pickerItems = products.data ? products.data.items : []
+  const productList =
+    selected && !pickerItems.some((p) => p.id === selected.id) ? [selected, ...pickerItems] : pickerItems
 
   function selectProduct(id) {
     setSearchParams(id ? { product: id } : {})
@@ -47,6 +57,7 @@ function StockMovements() {
     })
     // Refresh everything that shows quantities or history.
     products.reload()
+    selectedProduct.reload()
     history.reload()
     recent.reload()
   }
@@ -57,9 +68,9 @@ function StockMovements() {
         <h1>Stock Movements</h1>
       </div>
 
-      {products.error && (
+      {(products.error || selectedProduct.error) && (
         <p className="alert alert-error" role="alert">
-          {products.error}
+          {products.error || selectedProduct.error}
         </p>
       )}
 
@@ -96,6 +107,10 @@ function StockMovements() {
             productId={productId}
             onProductChange={selectProduct}
             onSuccess={handleSuccess}
+            search={pickerSearch}
+            onSearchChange={setPickerSearch}
+            totalMatches={products.data ? products.data.total : 0}
+            matchesShown={pickerItems.length}
           />
         </section>
 

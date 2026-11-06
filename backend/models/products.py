@@ -59,9 +59,83 @@ def row_to_product(row):
     }
 
 
-def list_products(conn):
-    rows = conn.execute(PRODUCT_SELECT + " ORDER BY p.name COLLATE NOCASE, p.id").fetchall()
-    return [row_to_product(r) for r in rows]
+# Whitelist of sortable columns: the client sends a key, we map it to SQL.
+# Anything not in this dict is rejected before it gets near the query.
+SORT_COLUMNS = {
+    "name": "p.name COLLATE NOCASE",
+    "sku": "p.sku COLLATE NOCASE",
+    "unit_price": "p.unit_price",
+    "quantity_in_stock": "p.quantity_in_stock",
+    "reorder_level": "p.reorder_level",
+    "category": "c.name COLLATE NOCASE",
+    "supplier": "s.name COLLATE NOCASE",
+    "created_at": "p.created_at",
+    "updated_at": "p.updated_at",
+}
+
+# SQL expressions for the three stock states (same rule as stock_status()).
+STOCK_STATUS_SQL = {
+    "out": "p.quantity_in_stock = 0",
+    "low": "p.quantity_in_stock > 0 AND p.quantity_in_stock <= p.reorder_level",
+    "in_stock": "p.quantity_in_stock > p.reorder_level",
+}
+
+
+def _escape_like(term):
+    """
+    Escape LIKE wildcards so a user searching for "100%" matches the literal
+    text instead of "100 followed by anything". Backslash is our escape char.
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_products(conn, filters=None, sort="name", order="asc", page=1, per_page=20):
+    """
+    Filtered, sorted and paginated product list.
+
+    `filters` keys (all optional): search, category_id, supplier_id,
+    stock_status, min_price, max_price. Values must already be validated by
+    the route; here they are only ever bound as SQL parameters.
+    Returns (items, total) where total counts ALL matching rows.
+    """
+    filters = filters or {}
+    where = []
+    params = []
+
+    if filters.get("search"):
+        like = f"%{_escape_like(filters['search'])}%"
+        where.append("(p.name LIKE ? ESCAPE '\\' OR p.sku LIKE ? ESCAPE '\\')")
+        params += [like, like]
+    if filters.get("category_id") is not None:
+        where.append("p.category_id = ?")
+        params.append(filters["category_id"])
+    if filters.get("supplier_id") is not None:
+        where.append("p.supplier_id = ?")
+        params.append(filters["supplier_id"])
+    if filters.get("stock_status"):
+        where.append(STOCK_STATUS_SQL[filters["stock_status"]])
+    if filters.get("min_price") is not None:
+        where.append("p.unit_price >= ?")
+        params.append(filters["min_price"])
+    if filters.get("max_price") is not None:
+        where.append("p.unit_price <= ?")
+        params.append(filters["max_price"])
+
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    order_sql = f" ORDER BY {SORT_COLUMNS[sort]} {'DESC' if order == 'desc' else 'ASC'}, p.id"
+
+    total = conn.execute(
+        "SELECT COUNT(*) FROM products p"
+        " LEFT JOIN categories c ON c.id = p.category_id"
+        " LEFT JOIN suppliers s ON s.id = p.supplier_id" + where_sql,
+        params,
+    ).fetchone()[0]
+
+    rows = conn.execute(
+        PRODUCT_SELECT + where_sql + order_sql + " LIMIT ? OFFSET ?",
+        params + [per_page, (page - 1) * per_page],
+    ).fetchall()
+    return [row_to_product(r) for r in rows], total
 
 
 def get_product(conn, product_id):

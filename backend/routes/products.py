@@ -68,10 +68,68 @@ def _validate_product(data, *, partial=False):
     return result
 
 
+MAX_PER_PAGE = 100
+STOCK_STATUSES = ("in_stock", "low", "out")
+
+
+def _parse_list_params(args):
+    """
+    Validate the query string of GET /api/products.
+
+    Every parameter is optional. Invalid values produce a 400 with a message
+    per parameter rather than being silently ignored, so typos in a client are
+    noticed immediately.
+    """
+    errors = FieldErrors()
+    filters = {}
+
+    search = parse_text(args, "search", errors, max_length=100)
+    if search:
+        filters["search"] = search
+    filters["category_id"] = parse_int(args, "category", errors, min_value=1)
+    filters["supplier_id"] = parse_int(args, "supplier", errors, min_value=1)
+
+    status = (args.get("stock_status") or "").strip().lower()
+    if status:
+        if status in STOCK_STATUSES:
+            filters["stock_status"] = status
+        else:
+            errors.add("stock_status", f"Must be one of: {', '.join(STOCK_STATUSES)}.")
+
+    filters["min_price"] = parse_price(args, "min_price", errors)
+    filters["max_price"] = parse_price(args, "max_price", errors)
+    if (filters["min_price"] is not None and filters["max_price"] is not None
+            and filters["min_price"] > filters["max_price"]):
+        errors.add("min_price", "min_price cannot be greater than max_price.")
+
+    sort = (args.get("sort") or "name").strip().lower()
+    if sort not in model.SORT_COLUMNS:
+        errors.add("sort", f"Must be one of: {', '.join(model.SORT_COLUMNS)}.")
+    order = (args.get("order") or "asc").strip().lower()
+    if order not in ("asc", "desc"):
+        errors.add("order", "Must be 'asc' or 'desc'.")
+
+    page = parse_int(args, "page", errors, default=1, min_value=1, max_value=1_000_000)
+    per_page = parse_int(args, "per_page", errors, default=20, min_value=1, max_value=MAX_PER_PAGE)
+
+    errors.raise_if_any()
+    return filters, sort, order, page, per_page
+
+
 @bp.get("")
 def list_products():
-    items = model.list_products(get_db())
-    return jsonify({"items": items, "total": len(items)})
+    filters, sort, order, page, per_page = _parse_list_params(request.args)
+    items, total = model.list_products(get_db(), filters, sort, order, page, per_page)
+    total_pages = max(1, -(-total // per_page))  # ceiling division
+    return jsonify({
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "sort": sort,
+        "order": order,
+    })
 
 
 @bp.get("/<id:product_id>")

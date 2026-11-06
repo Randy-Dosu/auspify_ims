@@ -3,14 +3,45 @@ import { formatMoney, formatNumber } from '../utils/format'
 import StockBadge from './StockBadge'
 
 /**
- * Read-only table of products with Edit / Delete actions.
+ * Table of products with Edit / Delete / History actions.
+ *
+ * Sorting: when `sort`, `order` and `onSort` are given, the column headers
+ * become clickable. Clicking the active column flips the direction.
  *
  * React escapes every value it renders ({product.name} etc.), so a product
  * named "<img src=x onerror=...>" is displayed as literal text, never run.
  */
-function ProductTable({ products, onEdit, onDelete }) {
+const COLUMNS = [
+  { key: 'sku', label: 'SKU' },
+  { key: 'name', label: 'Name' },
+  { key: 'category', label: 'Category' },
+  { key: 'supplier', label: 'Supplier' },
+  { key: 'unit_price', label: 'Unit price', className: 'num' },
+  { key: 'quantity_in_stock', label: 'Quantity', className: 'num' },
+  { key: null, label: 'Status' },
+  { key: 'reorder_level', label: 'Reorder level', className: 'num' },
+]
+
+function ProductTable({ products, onEdit, onDelete, sort, order, onSort, emptyMessage = 'No products found.' }) {
   if (!products || products.length === 0) {
-    return <p className="empty-state">No products found.</p>
+    return <p className="empty-state">{emptyMessage}</p>
+  }
+
+  function header(column) {
+    const sortable = Boolean(onSort && column.key)
+    const active = sortable && sort === column.key
+    const ariaSort = active ? (order === 'desc' ? 'descending' : 'ascending') : undefined
+    return (
+      <th
+        key={column.label}
+        className={`${column.className || ''} ${sortable ? 'sortable' : ''}`.trim()}
+        aria-sort={ariaSort}
+        onClick={sortable ? () => onSort(column.key) : undefined}
+      >
+        {column.label}
+        {active && <span className="sort-indicator">{order === 'desc' ? '▼' : '▲'}</span>}
+      </th>
+    )
   }
 
   return (
@@ -18,14 +49,7 @@ function ProductTable({ products, onEdit, onDelete }) {
       <table className="table">
         <thead>
           <tr>
-            <th>SKU</th>
-            <th>Name</th>
-            <th>Category</th>
-            <th>Supplier</th>
-            <th className="num">Unit price</th>
-            <th className="num">Quantity</th>
-            <th>Status</th>
-            <th className="num">Reorder level</th>
+            {COLUMNS.map(header)}
             <th className="actions">Actions</th>
           </tr>
         </thead>

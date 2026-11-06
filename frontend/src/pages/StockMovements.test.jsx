@@ -29,7 +29,9 @@ function renderPage(url = '/stock') {
 
 function baseRoutes(extra = {}) {
   return {
-    'GET /api/products': { items: [mouse, cable], total: 2 },
+    'GET /api/products': { items: [mouse, cable], total: 2, page: 1, per_page: 100, total_pages: 1 },
+    'GET /api/products/10': mouse,
+    'GET /api/products/11': cable,
     'GET /api/stock/transactions': { items: history.items },
     'GET /api/products/10/transactions': history,
     ...extra,
@@ -133,6 +135,29 @@ describe('StockMovements page', () => {
     expect(bodyOfCall(fetchMock, 'POST', '/api/stock/adjust')).toEqual({
       product_id: 10, new_quantity: 10, reason: 'Stock count correction', note: null,
     })
+  })
+
+  it('narrows the product picker through the API search and keeps a deep-linked product selectable', async () => {
+    const user = userEvent.setup()
+    const monitor = { id: 12, sku: 'ELEC-004', name: 'LED Monitor', quantity_in_stock: 2, reorder_level: 5, stock_status: 'low' }
+    const fetchMock = mockFetch(
+      baseRoutes({
+        // The picker list does NOT contain the deep-linked product 12...
+        'GET /api/products': { items: [mouse, cable], total: 150, page: 1, per_page: 100, total_pages: 2 },
+        'GET /api/products/12': monitor,
+        'GET /api/products/12/transactions': { items: [] },
+      }),
+    )
+    renderPage('/stock?product=12')
+    // ...yet it is selected and shown, because it is fetched separately.
+    expect(await screen.findByDisplayValue(/ELEC-004 — LED Monitor/)).toBeInTheDocument()
+    expect(screen.getByText('Showing 2 of 150 products — type to narrow the list.')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith('/api/products?per_page=100&sort=sku', expect.anything())
+
+    await user.type(screen.getByLabelText('Filter products'), 'cable')
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/products?per_page=100&sort=sku&search=cable', expect.anything()),
+    )
   })
 
   it('shows the out-of-stock badge for the selected product', async () => {
