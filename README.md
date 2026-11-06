@@ -2,8 +2,9 @@
 
 Inventory Management System — Python Flask + React (Vite) + SQLite.
 
-> Project status: **Step 0 (project setup)**. The backend exposes a health
-> check and the frontend displays it. Features are added step by step.
+> Project status: **Step 1 (inventory modules)** - schema + seed data, product /
+> category / supplier CRUD (API and UI). Features are added step by step; the
+> README is completed at the end of the project.
 
 ## Project layout
 

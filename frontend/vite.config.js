@@ -4,6 +4,11 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Vitest settings: run component tests in a simulated browser (jsdom).
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.js',
+  },
   server: {
     // Listen on all interfaces so the dev server works inside containers /
     // remote previews, not only on "localhost".

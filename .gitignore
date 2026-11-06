@@ -13,3 +13,9 @@ frontend/dist/
 .vscode/
 .idea/
 .DS_Store
+
+# ---- SQLite database files (created at runtime) ----
+backend/instance/
+*.db
+*.db-wal
+*.db-shm
