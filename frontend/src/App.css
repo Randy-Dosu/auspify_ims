@@ -1,0 +1,49 @@
+/* Layout for the Step 0 connectivity page. */
+.app {
+  max-width: 640px;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+  text-align: center;
+}
+
+.subtitle {
+  color: #6b7280;
+  margin-top: -0.5rem;
+}
+
+.status-card {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.status-card h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+/* One colour per connection state so the result is obvious at a glance. */
+.status {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.status-loading {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.status-ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-error {
+  background: #fee2e2;
+  color: #991b1b;
+}
