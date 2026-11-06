@@ -437,3 +437,69 @@
   color: #2563eb;
   border-bottom-color: #2563eb;
 }
+
+/* ---- Reports & dashboard (Step 3) ----------------------------------------- */
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.card-header h2 {
+  margin: 0;
+}
+
+.stat-warn {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.stat-danger {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.chart {
+  width: 100%;
+  margin: 0.5rem 0 1rem;
+}
+
+.range-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.range-form input[type='date'] {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.range-form .btn-small {
+  margin-left: 0;
+}
+
+.row-total td {
+  font-weight: 700;
+  border-top: 2px solid #e5e7eb;
+}
+
+.table-footnote {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.85rem;
+  color: #6b7280;
+  border-top: 1px solid #f3f4f6;
+}

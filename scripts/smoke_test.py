@@ -15,6 +15,7 @@ Exit code is 0 when every check passed, 1 otherwise.
 """
 
 import argparse
+import io
 import json
 import sys
 import time
@@ -503,7 +504,128 @@ def _step2_security(c, k, tag, created):
 
 
 # --------------------------------------------------------------------------- #
-STEPS = {0: step0, 1: step1, 2: step2}
+# Step 3: reports
+# --------------------------------------------------------------------------- #
+
+
+def step3(c, k):
+    import datetime as dt
+
+    tag = str(int(time.time()))[-6:]
+    created = {"products": [], "categories": [], "suppliers": []}
+    try:
+        k.section("Step 3: summary matches independent calculation")
+        products = c.get("/api/products")[2]["items"]
+        s, _, summ = c.get("/api/reports/summary")
+        k.check("GET /api/reports/summary -> 200", s == 200, (s, summ))
+        exp_units = sum(p["quantity_in_stock"] for p in products)
+        exp_value = round(sum(p["quantity_in_stock"] * p["unit_price"] for p in products), 2)
+        exp_low = sum(p["stock_status"] == "low" for p in products)
+        exp_out = sum(p["stock_status"] == "out" for p in products)
+        k.check(f"total_products == {len(products)}", summ["total_products"] == len(products), summ)
+        k.check(f"total_units == {exp_units}", summ["total_units"] == exp_units, summ)
+        k.check(f"total_value == {exp_value}", abs(summ["total_value"] - exp_value) < 0.01, summ)
+        k.check(f"low_stock_count == {exp_low}", summ["low_stock_count"] == exp_low, summ)
+        k.check(f"out_of_stock_count == {exp_out}", summ["out_of_stock_count"] == exp_out, summ)
+
+        k.section("Step 3: low-stock report")
+        s, _, low = c.get("/api/reports/low-stock")
+        expected_ids = {p["id"] for p in products if p["quantity_in_stock"] <= p["reorder_level"]}
+        k.check("contains exactly the products with qty <= reorder_level",
+                s == 200 and {i["id"] for i in low["items"]} == expected_ids and low["total"] == len(expected_ids), (s, low.get("total"), len(expected_ids)))
+        k.check("sorted by quantity ascending (most urgent first)",
+                [i["quantity_in_stock"] for i in low["items"]] == sorted(i["quantity_in_stock"] for i in low["items"]))
+        k.check("each row carries shortfall = reorder_level - quantity and a stock_status",
+                all(i["shortfall"] == i["reorder_level"] - i["quantity_in_stock"] and i["stock_status"] in ("low", "out") for i in low["items"]))
+
+        k.section("Step 3: valuation by category")
+        s, _, val = c.get("/api/reports/valuation-by-category")
+        k.check("category values sum to summary total_value",
+                s == 200 and abs(sum(i["total_value"] for i in val["items"]) - summ["total_value"]) < 0.01, (val.get("total_value"), summ["total_value"]))
+        k.check("category product counts sum to total_products",
+                sum(i["product_count"] for i in val["items"]) == summ["total_products"])
+        k.check("sorted by value descending",
+                [i["total_value"] for i in val["items"]] == sorted((i["total_value"] for i in val["items"]), reverse=True))
+        for cat in val["items"][:2]:
+            mine = [p for p in products if p["category_id"] == cat["category_id"]]
+            k.check(f"  '{cat['category_name']}' value matches sum over its products",
+                    abs(round(sum(p["quantity_in_stock"] * p["unit_price"] for p in mine), 2) - cat["total_value"]) < 0.01, cat)
+
+        k.section("Step 3: movements over a date range")
+        today = dt.date.today()
+        s, _, mv = c.get("/api/reports/movements")
+        k.check("default range is the last 30 days ending today",
+                s == 200 and len(mv["days"]) == 30 and mv["to"] == today.isoformat(), (s, mv.get("from"), mv.get("to"), len(mv.get("days", []))))
+        k.check("totals equal the sum of the daily buckets",
+                all(mv["totals"][f] == sum(d[f] for d in mv["days"]) for f in ("stock_in", "stock_out", "adjustments", "transactions")))
+        k.check("net = in - out + adjustments for every day",
+                all(d["net"] == d["stock_in"] - d["stock_out"] + d["adjustments"] for d in mv["days"]))
+        # Record known movements today and confirm today's bucket moves by exactly that amount.
+        s, _, prod = c.post("/api/products", {"sku": f"SMOKE-RPT-{tag}", "name": "SMOKE report item", "unit_price": 2.5, "quantity_in_stock": 0})
+        created["products"].append(prod["id"])
+        before = c.get(f"/api/reports/movements?from={today}&to={today}")[2]["days"][0]
+        c.post("/api/stock/in", {"product_id": prod["id"], "quantity": 40})
+        c.post("/api/stock/out", {"product_id": prod["id"], "quantity": 15})
+        after = c.get(f"/api/reports/movements?from={today}&to={today}")[2]["days"][0]
+        k.check("single-day range returns exactly one bucket for today", after["day"] == today.isoformat(), after)
+        k.check("today's stock_in rose by 40 and stock_out by 15",
+                after["stock_in"] - before["stock_in"] == 40 and after["stock_out"] - before["stock_out"] == 15, (before, after))
+        far = c.get("/api/reports/movements?from=2000-01-01&to=2000-01-07")[2]
+        k.check("range with no data returns 7 zero-filled days (not an error)",
+                len(far["days"]) == 7 and far["totals"]["transactions"] == 0, far["totals"])
+        three = c.get(f"/api/reports/movements?from={today - dt.timedelta(days=2)}&to={today}")[2]
+        k.check("3-day range -> 3 buckets in order", [d["day"] for d in three["days"]] == [(today - dt.timedelta(days=i)).isoformat() for i in (2, 1, 0)])
+        for query, label in [("from=2026-13-45", "invalid date"), ("from=2026-11-10&to=2026-11-01", "from after to"),
+                             ("from=2020-01-01&to=2026-01-01", "range > 366 days"), ("from=2026-01-01'%20OR%201=1--", "SQL injection in from"),
+                             ("to=notadate", "invalid to")]:
+            s, _, body = c.get(f"/api/reports/movements?{query}")
+            k.check(f"movements with {label} -> 400", s == 400 and isinstance(body, dict) and body.get("details"), (s, body))
+
+        k.section("Step 3: top moving products")
+        s, _, top = c.get(f"/api/reports/top-moving-products?from={today}&to={today}&limit=3")
+        k.check("limit=3 respected and sorted by units_out desc",
+                s == 200 and len(top["items"]) <= 3 and [i["units_out"] for i in top["items"]] == sorted((i["units_out"] for i in top["items"]), reverse=True), (s, top))
+        k.check("today's SMOKE product appears with units_out 15",
+                any(i["id"] == prod["id"] and i["units_out"] == 15 and i["units_in"] == 40 for i in top["items"]), top)
+        for bad in ("0", "51", "abc"):
+            s, _, body = c.get(f"/api/reports/top-moving-products?limit={bad}")
+            k.check(f"top-moving limit={bad} -> 400", s == 400, (s, body))
+
+        k.section("Step 3: CSV export")
+        s, hdrs, csv_text = c.get("/api/reports/low-stock?format=csv")
+        lines = csv_text.strip().split("\r\n") if isinstance(csv_text, str) else []
+        k.check("low-stock CSV -> 200 text/csv with attachment filename",
+                s == 200 and (_h(hdrs, "Content-Type") or "").startswith("text/csv") and "attachment" in (_h(hdrs, "Content-Disposition") or ""), (s, hdrs))
+        k.check("header row + one line per low-stock product",
+                lines and lines[0] == "SKU,Product,Category,Supplier,Quantity,Reorder level,Shortfall,Unit price,Status"
+                and len(lines) == 1 + c.get("/api/reports/low-stock")[2]["total"], (lines[:1], len(lines)))
+        k.check("nosniff header also on CSV", _h(hdrs, "X-Content-Type-Options") == "nosniff")
+        s, hdrs, body = c.get("/api/reports/valuation-by-category?format=csv")
+        k.check("valuation CSV -> 200 text/csv", s == 200 and (_h(hdrs, "Content-Type") or "").startswith("text/csv"), (s, hdrs))
+        s, _, body = c.get("/api/reports/low-stock?format=xml")
+        k.check("format=xml -> 400", s == 400, (s, body))
+
+        k.section("Step 3: security - CSV formula injection neutralised")
+        evil_names = ['=HYPERLINK("http://evil.example","click")', "+1+1", "-2+3", "@SUM(A1)"]
+        for i, name in enumerate(evil_names):
+            s, _, p = c.post("/api/products", {"sku": f"SMOKE-CSV{i}-{tag}", "name": name, "unit_price": 1, "quantity_in_stock": 0})
+            if s == 201:
+                created["products"].append(p["id"])
+        s, _, csv_text = c.get("/api/reports/low-stock?format=csv")
+        rows = list(__import__("csv").reader(io.StringIO(csv_text)))
+        cells = {r[1] for r in rows[1:]}
+        for name in evil_names:
+            k.check(f"CSV cell for {name[:14]!r} is prefixed with a quote", ("'" + name) in cells and name not in cells)
+        s, _, body = c.get("/api/reports/low-stock")
+        k.check("JSON output keeps the raw name (escaping is CSV-only)", any(i["name"] == evil_names[0] for i in body["items"]))
+    finally:
+        _cleanup(c, created)
+
+
+
+
+# --------------------------------------------------------------------------- #
+STEPS = {0: step0, 1: step1, 2: step2, 3: step3}
 
 
 def main():
