@@ -231,7 +231,7 @@ describe('Products page - search, filters, sorting, pagination', () => {
     await screen.findByText('USB-C Cable')
     expect(lastListQuery(fetchMock).get('stock_status')).toBe('out')
     expect(screen.getByLabelText('Stock level')).toHaveValue('out')
-    expect(screen.getByRole('status')).toHaveTextContent('1 product match your filters')
+    expect(screen.getByRole('status')).toHaveTextContent('1 product matches your filters')
 
     await user.selectOptions(screen.getByLabelText('Category'), '1')
     await waitFor(() => expect(lastListQuery(fetchMock).get('category')).toBe('1'))

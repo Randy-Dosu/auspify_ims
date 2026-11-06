@@ -4,8 +4,8 @@ A small but complete inventory system built as a teaching project:
 **Python Flask** REST API + **SQLite** database + **React (Vite)** front end.
 
 > Status: **complete** — Steps 0 to 5 built, tested and audited.
-> 182 backend tests, 36 frontend tests, 213 live smoke checks and a 6-point
-> data-integrity audit all pass. See [docs/TESTING.md](docs/TESTING.md).
+> 200 backend tests, 36 frontend tests, 213 live smoke checks, a headless-browser
+> page tour and a 6-point data-integrity audit all pass. See [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
@@ -37,7 +37,7 @@ A small but complete inventory system built as a teaching project:
 | **Stock status** | Automatic badges: *In stock*, *Low* (`quantity <= reorder_level`), *Out of stock* (`quantity = 0`). |
 | **Search & filtering** | Search by name/SKU (partial, case-insensitive), filter by category, supplier, stock status and price range, sort any column both ways, paginate, "Clear filters", results count, empty-state message. Filters live in the URL so they survive reloads and can be shared. |
 | **Reports** | Summary cards, inventory value by category (bar + pie), stock movements over a date range (line), top-moving products, low-stock table with shortfall, CSV export (formula-injection safe). |
-| **Safety** | Validated input with per-field messages, parameterised SQL, whitelisted sort columns, size limits, security headers, CORS allow-list, no stack traces in responses. |
+| **Safety** | Validated input with per-field messages, parameterised SQL, whitelisted sort columns, size limits, security headers + Content-Security-Policy, CORS allow-list, no stack traces in responses. |
 
 ## 2. Tech stack
 
@@ -66,6 +66,7 @@ auspify_ims/
 │   ├── errors.py                  # exception classes -> JSON error responses
 │   ├── validation.py              # input parsing helpers (text, int, price, email)
 │   ├── audit.py                   # data-integrity audit (read-only)
+│   ├── static_site.py             # serves frontend/dist from "/" when it exists
 │   ├── models/                    # database layer - all SQL lives here
 │   │   ├── products.py            #   CRUD + list_products() with filters/sort/pages
 │   │   ├── categories.py
@@ -84,7 +85,8 @@ auspify_ims/
 │   │   ├── test_stock.py
 │   │   ├── test_reports.py
 │   │   ├── test_filters.py
-│   │   └── test_security.py
+│   │   ├── test_security.py
+│   │   └── test_static_site.py
 │   ├── instance/inventory.db      # created on first run (git-ignored)
 │   ├── pytest.ini
 │   ├── requirements.txt
@@ -92,6 +94,7 @@ auspify_ims/
 └── frontend/
     ├── index.html
     ├── vite.config.js             # dev server + /api proxy -> http://localhost:5000
+    ├── dist/                      # production build (npm run build; git-ignored)
     ├── package.json
     └── src/
         ├── main.jsx, App.jsx, App.css, index.css
@@ -141,26 +144,44 @@ npm install
 
 ## 5. Run
 
+There are two ways to run the app.
+
+### Option A - one server (recommended for demos, previews and deployment)
+
+Build the React app once, then Flask serves both the UI and the API on port 5000:
+
+```bash
+cd frontend && npm run build          # writes frontend/dist (3 small files, ~200 KB gzipped)
+cd ../backend && source .venv/bin/activate && python app.py
+```
+
+Open <http://localhost:5000>. Rebuild after changing frontend code.
+
+### Option B - two servers (best for frontend development)
+
 ```bash
 # Terminal 1 - API on http://localhost:5000
 cd backend
 source .venv/bin/activate
 python app.py
 
-# Terminal 2 - UI on http://localhost:5173
+# Terminal 2 - UI with hot reload on http://localhost:5173
 cd frontend
 npm run dev
 ```
 
-Open <http://localhost:5173>.
+Open <http://localhost:5173>. The Vite dev server proxies `/api/*` to Flask and
+reloads the browser on every edit, but it sends ~10 MB of un-minified
+JavaScript per page load - use Option A when the browser is not on the same
+machine (remote previews, phones on the office Wi-Fi, slow links).
 
 - On first start the backend creates `backend/instance/inventory.db` from
   `schema.sql` and, because the database is empty, loads the sample data
   (6 categories, 4 suppliers, 22 products, ~160 movements).
 - Start with an empty database: `IMS_AUTO_SEED=0 python app.py`.
 - Reset the sample data at any time: `python seed.py --reset`.
-- The Vite dev server proxies `/api/*` to Flask, so the browser never needs to
-  know the backend address.
+- In both options the browser only ever talks to one origin (`/api/...` is a
+  relative URL), so no CORS configuration is needed in normal use.
 
 Quick check from the terminal:
 
@@ -173,7 +194,7 @@ curl "http://localhost:5000/api/products?stock_status=low&per_page=3"
 ## 6. Test & audit
 
 ```bash
-# Backend unit/integration tests (temporary DB, no server needed) - 182 tests
+# Backend unit/integration tests (temporary DB, no server needed) - 200 tests
 cd backend && source .venv/bin/activate && python -m pytest
 
 # Data-integrity audit of the live database (exit code 0 = healthy)
@@ -204,6 +225,8 @@ environment variables:
 | `IMS_DATABASE` | `backend/instance/inventory.db` | SQLite file path |
 | `IMS_AUTO_SEED` | `1` | Load sample data when the database is empty (`0` to disable) |
 | `IMS_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Browser origins allowed to call the API directly |
+| `IMS_FRONTEND_DIST` | `frontend/dist` | Folder with the built React app; served from `/` when present |
+| `IMS_FRAME_ANCESTORS` | *(empty)* | CSP `frame-ancestors` for the UI, e.g. `'none'` in production to block clickjacking (empty = embeddable, needed for sandbox previews) |
 | `MAX_CONTENT_LENGTH` | 1 MB (code constant) | Largest accepted request body |
 
 ## 8. Database design
@@ -385,7 +408,7 @@ Latest full run (all on the final commit):
 
 | Suite | Command | Result |
 |-------|---------|--------|
-| Backend pytest | `python -m pytest` | **182 passed** in 5.4 s |
+| Backend pytest | `python -m pytest` | **200 passed** in 6.1 s |
 | Frontend Vitest | `npx vitest run` | **36 passed** (5 files) |
 | Lint | `npm run lint` | 0 warnings, 0 errors |
 | Production build | `npm run build` | OK |
@@ -394,6 +417,7 @@ Latest full run (all on the final commit):
 | Audit on a corrupted copy | `python audit.py /tmp/corrupt.db` | 4 checks failed, every injected fault listed, exit 1 |
 | Mutation check | rollback removed / oversell guard removed | each caught by a failing test |
 | Dependency scan | `pip-audit`, `npm audit` | 0 known vulnerabilities |
+| Headless Chromium tour of the built app | `/`, `/products`, filtered + deep-linked URLs, `/stock`, `/reports`, `/manage`, typed search | every page rendered, 0 console errors, 0 failed requests, 0 CSP violations; first load 6 requests / ~690 KB in ~1 s |
 
 Full details, the manual E2E checklist and the edge-case matrix:
 [docs/TESTING.md](docs/TESTING.md).
@@ -420,4 +444,5 @@ Full details, the manual E2E checklist and the edge-case matrix:
 | 3 | `65d2668` | Reports API, dashboard and reports pages with charts and CSV export |
 | 4 | `d06eb32` | Search, filters, sorting, pagination (API + UI); stock picker made search-driven |
 | 5 | `ff63a21` | pytest suite, security tests, data-integrity audit, stricter price parsing |
-| — | `af0d634` (amended) | Final README and testing guide |
+| — | `af0d634`, `37c8611` | Final README and testing guide |
+| — | `729b46f` | Serve the production build from Flask (fast single-port preview/deployment), CSP, static-site tests |

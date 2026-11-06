@@ -16,7 +16,7 @@ Structure:
     routes/         HTTP layer (Flask blueprints)
 """
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.routing import IntegerConverter
 
@@ -24,6 +24,7 @@ import database
 from config import Config
 from errors import register_error_handlers
 from routes import categories, products, reports, stock, suppliers
+from static_site import content_security_policy, register_static_site
 
 
 class IdConverter(IntegerConverter):
@@ -80,19 +81,27 @@ def create_app(test_config=None):
         """Liveness check: returns a small JSON payload if the server is up."""
         return jsonify({"status": "ok", "service": "auspify-ims-backend"})
 
+    # Optional: serve the built React app (frontend/dist) from "/".
+    register_static_site(app)
+
     @app.after_request
     def set_security_headers(response):
         """
-        Defensive headers for every response:
+        Defensive headers on every response:
           * nosniff      - browsers must not guess content types
-          * DENY         - API responses can never be framed by another site
           * no-referrer  - do not leak our URLs to third parties
+        API responses additionally get:
+          * DENY         - JSON can never be framed by another site
           * no-store     - inventory data must not linger in shared caches
+        HTML pages instead get a Content-Security-Policy (static_site.py).
         """
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-store"
+        if request.path == "/api" or request.path.startswith("/api/"):
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Cache-Control"] = "no-store"
+        elif response.mimetype == "text/html":
+            response.headers["Content-Security-Policy"] = content_security_policy()
         return response
 
     return app

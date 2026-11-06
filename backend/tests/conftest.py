@@ -17,6 +17,9 @@ def app(tmp_path):
         "TESTING": True,
         "DATABASE": str(tmp_path / "test.db"),
         "AUTO_SEED": False,
+        # API only: a frontend build may or may not exist on the developer's
+        # machine, so point at an empty folder for deterministic tests.
+        "FRONTEND_DIST": str(tmp_path / "no-dist"),
     })
     yield application
 

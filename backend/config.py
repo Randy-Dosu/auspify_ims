@@ -37,3 +37,16 @@ class Config:
 
     # Reject request bodies larger than 1 MB (protects against huge payloads).
     MAX_CONTENT_LENGTH = 1 * 1024 * 1024
+
+    # Folder with the production build of the React app (frontend/dist). When
+    # it exists, Flask serves the UI from "/" as well as the API - see
+    # static_site.py. Point IMS_FRONTEND_DIST elsewhere if you deploy the
+    # build to a different location.
+    FRONTEND_DIST = os.environ.get(
+        "IMS_FRONTEND_DIST", os.path.join(BASE_DIR, "..", "frontend", "dist")
+    )
+
+    # Who may embed the UI in an <iframe>. Empty = no restriction (needed for
+    # sandbox previews). In production set IMS_FRAME_ANCESTORS="'none'" to
+    # block clickjacking, or "'self'" to allow framing by this site only.
+    FRAME_ANCESTORS = os.environ.get("IMS_FRAME_ANCESTORS", "")

@@ -34,7 +34,9 @@ python -m pytest tests/test_stock.py     # one file
 | `tests/test_filters.py` | 52 | Each filter alone, **every pair of filters equals the intersection** of the single results, all filters together, sorting both ways (name case-insensitive, joined columns), pagination counts/overlap/beyond-end, 21 invalid-parameter cases → 400 naming the field, LIKE wildcards treated literally, SQL-injection payloads are plain text |
 | `tests/test_security.py` | 44 | Security headers on every response, JSON (not HTML) 404/405, malformed bodies, 1 MB body limit → 413, mass-assignment ignored, SKU whitelist, non-finite/odd price encodings rejected, bad ids → 404 not 500, CORS allow-list, product_id type checks |
 
-**Latest run:** `182 passed in 5.4s`.
+| `tests/test_static_site.py` | 18 | Flask serving the production build: `index.html` for client routes, hashed assets immutable + gzipped, small files uncompressed, missing files → 404 JSON (never HTML), path-traversal attempts stay inside `dist/`, API routing untouched (GET on a POST-only endpoint is still 405), helpful JSON on `/` when there is no build |
+
+**Latest run:** `200 passed in 6.1s`.
 
 ### Mutation check (does the suite catch real bugs?)
 
@@ -126,7 +128,8 @@ listed every injected fault, exit code 1.
 | Integer overflow | Ids limited to 1..2^63−1 (custom URL converter), quantities ≤ 1e9, prices ≤ 1e9 | `test_security.py`, `test_crud.py` |
 | Oversized bodies | `MAX_CONTENT_LENGTH` = 1 MB → 413 JSON | `test_security.py` |
 | Information leaks | Unhandled errors → `{"error": "Internal server error."}`, never a stack trace | `test_stock.py` |
-| Browser hardening | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` | `test_security.py` |
+| Browser hardening | Every response: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. API responses: `X-Frame-Options: DENY`, `Cache-Control: no-store`. HTML pages: `Content-Security-Policy` (`default-src 'self'`, no inline scripts, optional `frame-ancestors` via `IMS_FRAME_ANCESTORS`) | `test_security.py`, `test_static_site.py` |
+| Static file serving | Only files inside `frontend/dist`; traversal (`..`, encoded) → 404; asset-like URLs never answered with HTML | `test_static_site.py` |
 | CORS | Only `http://localhost:5173` / `127.0.0.1:5173` (configurable) | `test_security.py` |
 | Race conditions | `BEGIN IMMEDIATE` transactions + conditional UPDATE + DB CHECK | `test_stock.py` concurrency tests |
 | XSS | API returns JSON only; React escapes text when rendering | `test_security.py`, smoke `<script>` check |
@@ -134,8 +137,14 @@ listed every injected fault, exit code 1.
 
 ## 6. Manual end-to-end checklist
 
-Run both servers (`python app.py` and `npm run dev`), open
-<http://localhost:5173> and work through the table. Tick Pass/Fail as you go.
+Run the app (single server: `npm run build` then `python app.py` → <http://localhost:5000>,
+or dev mode: `python app.py` + `npm run dev` → <http://localhost:5173>) and work
+through the table. Tick Pass/Fail as you go.
+
+> A headless-Chromium pass over the built app (every page, a deep-linked
+> filter URL, a typed search) reported no console errors, failed requests or
+> CSP violations - but it cannot judge looks, so the visual items below still
+> need a human.
 
 ### Dashboard
 

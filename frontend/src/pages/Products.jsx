@@ -169,7 +169,7 @@ function Products() {
       {data && (
         <p className="results-count" role="status" aria-live="polite">
           <strong>{data.total}</strong> {data.total === 1 ? 'product' : 'products'}
-          {hasFilters ? ' match your filters' : ''}
+          {hasFilters ? (data.total === 1 ? ' matches your filters' : ' match your filters') : ''}
           {products.loading ? ' · refreshing…' : ''}
         </p>
       )}
