@@ -1,0 +1,4 @@
+# Extra tools for development and testing.
+-r requirements.txt
+pytest==9.2.0
+pip-audit

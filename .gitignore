@@ -1,0 +1,24 @@
+# ---- Python / Flask backend ----
+backend/.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- Node / React frontend ----
+# (frontend/.gitignore also covers node_modules and dist)
+frontend/node_modules/
+frontend/dist/
+
+# ---- Editors & OS ----
+.vscode/
+.idea/
+.DS_Store
+
+# ---- SQLite database files (created at runtime) ----
+backend/instance/
+*.db
+*.db-wal
+*.db-shm
+
+# ---- Test caches ----
+.pytest_cache/
