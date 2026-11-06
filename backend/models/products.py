@@ -25,6 +25,21 @@ EDITABLE_FIELDS = ("sku", "name", "description", "category_id", "supplier_id",
                    "unit_price", "reorder_level")
 
 
+def stock_status(quantity, reorder_level):
+    """
+    Business rule for stock levels (used by badges, filters and reports):
+      "out"       quantity == 0
+      "low"       0 < quantity <= reorder_level
+      "in_stock"  quantity > reorder_level
+    The three states are mutually exclusive.
+    """
+    if quantity <= 0:
+        return "out"
+    if quantity <= reorder_level:
+        return "low"
+    return "in_stock"
+
+
 def row_to_product(row):
     return {
         "id": row["id"],
@@ -38,6 +53,7 @@ def row_to_product(row):
         "unit_price": row["unit_price"],
         "quantity_in_stock": row["quantity_in_stock"],
         "reorder_level": row["reorder_level"],
+        "stock_status": stock_status(row["quantity_in_stock"], row["reorder_level"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

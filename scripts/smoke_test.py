@@ -314,7 +314,196 @@ def _step1_security(c, k, tag, created):
 
 
 # --------------------------------------------------------------------------- #
-STEPS = {0: step0, 1: step1}
+# Step 2: stock management
+# --------------------------------------------------------------------------- #
+
+
+def _tx_sum(items):
+    """Apply the audit rule: IN adds, OUT subtracts, ADJUSTMENT is signed."""
+    total = 0
+    for t in items:
+        if t["type"] == "IN":
+            total += t["quantity"]
+        elif t["type"] == "OUT":
+            total -= t["quantity"]
+        else:
+            total += t["quantity"]
+    return total
+
+
+def step2(c, k):
+    tag = str(int(time.time()))[-6:]
+    created = {"products": [], "categories": [], "suppliers": []}
+    try:
+        _step2_operations(c, k, tag, created)
+        _step2_badges(c, k, tag, created)
+        _step2_concurrency(c, k, tag, created)
+        _step2_security(c, k, tag, created)
+    finally:
+        _cleanup(c, created)
+
+
+def _qty(c, pid):
+    return c.get(f"/api/products/{pid}")[2]["quantity_in_stock"]
+
+
+def _history(c, pid):
+    return c.get(f"/api/products/{pid}/transactions")[2]["items"]
+
+
+def _step2_operations(c, k, tag, created):
+    k.section("Step 2: stock in / out / adjust")
+    s, _, prod = c.post("/api/products", {"sku": f"SMOKE-STK-{tag}", "name": "SMOKE stock item",
+                                          "unit_price": 10, "quantity_in_stock": 10, "reorder_level": 5})
+    k.check("Create product with initial quantity 10 -> 201", s == 201, (s, prod))
+    pid = prod["id"]
+    created["products"].append(pid)
+    hist = _history(c, pid)
+    k.check("Initial quantity produced ONE 'Initial stock' IN transaction",
+            len(hist) == 1 and hist[0]["type"] == "IN" and hist[0]["quantity"] == 10 and hist[0]["reason"] == "Initial stock", hist)
+
+    s, _, body = c.post("/api/stock/in", {"product_id": pid, "quantity": 5, "reason": "Purchase order", "note": "PO-77"})
+    k.check("POST /api/stock/in +5 -> 201, product qty 15", s == 201 and body["product"]["quantity_in_stock"] == 15, (s, body))
+    k.check("  transaction row: IN 5, reason/note stored",
+            body["transaction"]["type"] == "IN" and body["transaction"]["quantity"] == 5
+            and body["transaction"]["reason"] == "Purchase order" and body["transaction"]["note"] == "PO-77", body.get("transaction"))
+
+    s, _, body = c.post("/api/stock/out", {"product_id": pid, "quantity": 4})
+    k.check("POST /api/stock/out 4 -> 201, product qty 11", s == 201 and body["product"]["quantity_in_stock"] == 11, (s, body))
+    k.check("  transaction row: OUT 4 with default reason 'Sale'",
+            body["transaction"]["type"] == "OUT" and body["transaction"]["quantity"] == 4 and body["transaction"]["reason"] == "Sale", body.get("transaction"))
+
+    before_hist = len(_history(c, pid))
+    s, _, body = c.post("/api/stock/out", {"product_id": pid, "quantity": 100})
+    k.check("Over-withdrawal (100 of 11) -> 400 with clear message",
+            s == 400 and "Insufficient stock" in body.get("error", "") and "11 available" in body["error"], (s, body))
+    k.check("  quantity unchanged (still 11)", _qty(c, pid) == 11, _qty(c, pid))
+    k.check("  no transaction row written for the failed operation", len(_history(c, pid)) == before_hist, (before_hist, len(_history(c, pid))))
+
+    s, _, body = c.post("/api/stock/out", {"product_id": pid, "quantity": 11})
+    k.check("Withdraw exactly the remaining 11 -> 201, qty 0 (boundary allowed)", s == 201 and body["product"]["quantity_in_stock"] == 0, (s, body))
+    s, _, body = c.post("/api/stock/out", {"product_id": pid, "quantity": 1})
+    k.check("Withdraw 1 from 0 -> 400", s == 400, (s, body))
+
+    s, _, body = c.post("/api/stock/adjust", {"product_id": pid, "new_quantity": 8, "note": "Physical count"})
+    k.check("Adjust new_quantity=8 from 0 -> 201, ADJUSTMENT +8, qty 8",
+            s == 201 and body["transaction"]["type"] == "ADJUSTMENT" and body["transaction"]["quantity"] == 8
+            and body["product"]["quantity_in_stock"] == 8, (s, body))
+    s, _, body = c.post("/api/stock/adjust", {"product_id": pid, "delta": -3})
+    k.check("Adjust delta=-3 -> 201, ADJUSTMENT -3, qty 5",
+            s == 201 and body["transaction"]["quantity"] == -3 and body["product"]["quantity_in_stock"] == 5, (s, body))
+    before_hist = len(_history(c, pid))
+    s, _, body = c.post("/api/stock/adjust", {"product_id": pid, "delta": -50})
+    k.check("Adjust delta=-50 (would go negative) -> 400, qty still 5, no row",
+            s == 400 and _qty(c, pid) == 5 and len(_history(c, pid)) == before_hist, (s, body))
+    s, _, body = c.post("/api/stock/adjust", {"product_id": pid, "new_quantity": 5})
+    k.check("Adjust to the current quantity -> 400 'no change'", s == 400, (s, body))
+    s, _, body = c.post("/api/stock/adjust", {"product_id": pid, "new_quantity": 5, "delta": 1})
+    k.check("Adjust with BOTH new_quantity and delta -> 400", s == 400, (s, body))
+    s, _, body = c.post("/api/stock/adjust", {"product_id": pid})
+    k.check("Adjust with NEITHER -> 400", s == 400, (s, body))
+    s, _, body = c.post("/api/stock/adjust", {"product_id": pid, "delta": 0})
+    k.check("Adjust delta=0 -> 400", s == 400, (s, body))
+
+    k.section("Step 2: history is a complete audit trail")
+    hist = _history(c, pid)
+    k.check("Transaction types recorded: IN, OUT, ADJUSTMENT", {t["type"] for t in hist} == {"IN", "OUT", "ADJUSTMENT"}, hist)
+    k.check("Sum of transactions == current quantity (5)", _tx_sum(hist) == 5 == _qty(c, pid), (_tx_sum(hist), _qty(c, pid)))
+    k.check("History is newest first", all(hist[i]["id"] >= hist[i + 1]["id"] for i in range(len(hist) - 1)))
+    s, _, body = c.get("/api/products/999999/transactions")
+    k.check("History of unknown product -> 404", s == 404, (s, body))
+    s, _, body = c.get("/api/stock/transactions?limit=5")
+    k.check("GET /api/stock/transactions?limit=5 -> 200, 5 most recent", s == 200 and len(body["items"]) == 5, (s, body))
+
+    k.section("Step 2: input validation")
+    for payload, label in [
+        ({"product_id": pid, "quantity": 0}, "quantity 0"),
+        ({"product_id": pid, "quantity": -1}, "quantity -1"),
+        ({"product_id": pid, "quantity": 1.5}, "quantity 1.5"),
+        ({"product_id": pid, "quantity": "abc"}, "quantity 'abc'"),
+        ({"product_id": pid, "quantity": True}, "quantity true"),
+        ({"product_id": pid, "quantity": 10**12}, "quantity 1e12 (above cap)"),
+        ({"quantity": 1}, "missing product_id"),
+        ({"product_id": "1; DROP TABLE products", "quantity": 1}, "product_id injection string"),
+        ({"product_id": 99999999999999999999, "quantity": 1}, "huge product_id"),
+    ]:
+        s, _, body = c.post("/api/stock/in", payload)
+        k.check(f"stock/in with {label} -> 400", s == 400 and isinstance(body, dict) and body.get("details"), (s, body))
+    s, _, body = c.post("/api/stock/in", {"product_id": 999999, "quantity": 1})
+    k.check("stock/in for unknown product -> 404", s == 404, (s, body))
+
+
+def _step2_badges(c, k, tag, created):
+    k.section("Step 2: stock_status (badge logic)")
+    s, _, prod = c.post("/api/products", {"sku": f"SMOKE-BDG-{tag}", "name": "SMOKE badge item",
+                                          "unit_price": 1, "quantity_in_stock": 0, "reorder_level": 3})
+    pid = prod["id"]
+    created["products"].append(pid)
+    k.check("qty 0, reorder 3 -> 'out'", prod["stock_status"] == "out", prod["stock_status"])
+    s, _, body = c.post("/api/stock/in", {"product_id": pid, "quantity": 1})
+    k.check("qty 1 -> 'low'", body["product"]["stock_status"] == "low", body["product"]["stock_status"])
+    s, _, body = c.post("/api/stock/in", {"product_id": pid, "quantity": 2})
+    k.check("qty 3 (== reorder level) -> 'low'", body["product"]["stock_status"] == "low", body["product"]["stock_status"])
+    s, _, body = c.post("/api/stock/in", {"product_id": pid, "quantity": 1})
+    k.check("qty 4 (> reorder level) -> 'in_stock'", body["product"]["stock_status"] == "in_stock", body["product"]["stock_status"])
+    s, _, body = c.put(f"/api/products/{pid}", {"reorder_level": 10})
+    k.check("raising reorder_level to 10 -> 'low' again", body["stock_status"] == "low", body)
+    s, _, body = c.get("/api/products")
+    k.check("every product in the list carries a stock_status",
+            all(p.get("stock_status") in ("in_stock", "low", "out") for p in body["items"]))
+
+
+def _step2_concurrency(c, k, tag, created):
+    import concurrent.futures
+
+    k.section("Step 2: concurrency - 20 simultaneous withdrawals of 1 from a stock of 10")
+    s, _, prod = c.post("/api/products", {"sku": f"SMOKE-CC-{tag}", "name": "SMOKE concurrency item",
+                                          "unit_price": 1, "quantity_in_stock": 10})
+    pid = prod["id"]
+    created["products"].append(pid)
+
+    def withdraw(_):
+        return c.post("/api/stock/out", {"product_id": pid, "quantity": 1})[0]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        statuses = list(pool.map(withdraw, range(20)))
+    ok = statuses.count(201)
+    rejected = statuses.count(400)
+    k.check("exactly 10 succeeded (201) and 10 were rejected (400)", ok == 10 and rejected == 10, statuses)
+    k.check("final quantity is 0, never negative", _qty(c, pid) == 0, _qty(c, pid))
+    hist = _history(c, pid)
+    k.check("exactly 10 OUT rows recorded (+1 initial IN)", sum(t["type"] == "OUT" for t in hist) == 10 and len(hist) == 11, len(hist))
+    k.check("history sums to the final quantity", _tx_sum(hist) == 0, _tx_sum(hist))
+
+
+def _step2_security(c, k, tag, created):
+    k.section("Step 2: security")
+    pid = created["products"][0]
+    s, _, body = c.post("/api/stock/in", {"product_id": pid, "quantity": 1, "note": "n" * 1001})
+    k.check("note longer than 1000 chars -> 400", s == 400 and "note" in body.get("details", {}), (s, body))
+    s, _, body = c.post("/api/stock/in", {"product_id": pid, "quantity": 1, "reason": "r" * 101})
+    k.check("reason longer than 100 chars -> 400", s == 400 and "reason" in body.get("details", {}), (s, body))
+    s, _, body = c.post("/api/stock/in", {"product_id": pid, "quantity": 1, "reason": ["not", "text"]})
+    k.check("reason as array -> 400", s == 400, (s, body))
+    xss = "<script>alert('x')</script>"
+    s, _, body = c.post("/api/stock/in", {"product_id": pid, "quantity": 1, "note": xss, "reason": "'; DELETE FROM stock_transactions; --"})
+    k.check("XSS/SQL strings in note/reason stored literally, tables intact",
+            s == 201 and body["transaction"]["note"] == xss and len(_history(c, pid)) >= 2, (s, body))
+    s, _, body = c.post("/api/stock/in", raw=b"{bad json", headers={"Content-Type": "application/json"})
+    k.check("malformed JSON to stock/in -> 400", s == 400, (s, body))
+    s, _, body = c.get("/api/stock/in")
+    k.check("GET /api/stock/in -> 405 JSON", s == 405 and isinstance(body, dict), (s, body))
+    s, _, body = c.put("/api/stock/out", {"product_id": pid, "quantity": 1})
+    k.check("PUT /api/stock/out -> 405 JSON", s == 405 and isinstance(body, dict), (s, body))
+    for bad in ("0", "-5", "abc", "10000"):
+        s, _, body = c.get(f"/api/stock/transactions?limit={bad}")
+        k.check(f"GET /api/stock/transactions?limit={bad} -> 400", s == 400 and isinstance(body, dict), (s, body))
+    s, _, body = c.get(f"/api/products/{pid}/transactions?limit=1%27%20OR%201=1")
+    k.check("limit with SQL injection -> 400", s == 400, (s, body))
+
+
+# --------------------------------------------------------------------------- #
+STEPS = {0: step0, 1: step1, 2: step2}
 
 
 def main():

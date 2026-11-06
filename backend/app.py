@@ -56,6 +56,9 @@ def create_app(test_config=None):
     # <id:...> in route URLs = positive 64-bit integer (see IdConverter).
     app.url_map.converters["id"] = IdConverter
 
+    # Keep JSON keys in the order our code defines them (easier to read).
+    app.json.sort_keys = False
+
     # CORS: only the origins listed in config may call /api/* from a browser.
     CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
 

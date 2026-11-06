@@ -37,6 +37,3 @@ class Config:
 
     # Reject request bodies larger than 1 MB (protects against huge payloads).
     MAX_CONTENT_LENGTH = 1 * 1024 * 1024
-
-    # Keep JSON keys in the order we define them (nicer to read in curl output).
-    JSON_SORT_KEYS = False

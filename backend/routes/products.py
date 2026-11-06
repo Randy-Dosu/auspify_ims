@@ -1,9 +1,10 @@
 """Product endpoints: /api/products"""
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from database import get_db
 from models import products as model
+from models import stock as stock_model
 from validation import (
     MAX_LONG_TEXT,
     MAX_QUANTITY,
@@ -94,3 +95,13 @@ def update_product(product_id):
 def delete_product(product_id):
     model.delete_product(get_db(), product_id)
     return "", 204
+
+
+@bp.get("/<id:product_id>/transactions")
+def product_transactions(product_id):
+    """Movement history for one product, newest first."""
+    errors = FieldErrors()
+    limit = parse_int(request.args, "limit", errors, default=100, min_value=1, max_value=500)
+    errors.raise_if_any()
+    items = stock_model.list_transactions_for_product(get_db(), product_id, limit)
+    return jsonify({"items": items})

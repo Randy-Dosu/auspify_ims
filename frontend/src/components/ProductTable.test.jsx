@@ -1,6 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { render as rtlRender, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import ProductTable from './ProductTable'
+
+// ProductTable contains a <Link>, so it must render inside a router.
+const render = (ui) => rtlRender(<MemoryRouter>{ui}</MemoryRouter>)
 
 const product = {
   id: 1,
@@ -12,6 +16,7 @@ const product = {
   unit_price: 85,
   quantity_in_stock: 12,
   reorder_level: 5,
+  stock_status: 'in_stock',
 }
 
 describe('ProductTable', () => {
@@ -26,6 +31,29 @@ describe('ProductTable', () => {
     expect(screen.getByText('Wireless Mouse')).toBeInTheDocument()
     expect(screen.getByText('Electronics')).toBeInTheDocument()
     expect(screen.getByText('12')).toBeInTheDocument()
+    expect(screen.getByText('In stock')).toBeInTheDocument()
+  })
+
+  it('shows the right badge for each stock status', () => {
+    render(
+      <ProductTable
+        products={[
+          { ...product, id: 1, stock_status: 'in_stock' },
+          { ...product, id: 2, sku: 'B', stock_status: 'low' },
+          { ...product, id: 3, sku: 'C', stock_status: 'out' },
+        ]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('In stock')).toHaveClass('badge-in_stock')
+    expect(screen.getByText('Low stock')).toHaveClass('badge-low')
+    expect(screen.getByText('Out of stock')).toHaveClass('badge-out')
+  })
+
+  it('links each row to its stock history', () => {
+    render(<ProductTable products={[product]} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute('href', '/stock?product=1')
   })
 
   it('escapes HTML in product data (stored XSS is rendered as text)', () => {

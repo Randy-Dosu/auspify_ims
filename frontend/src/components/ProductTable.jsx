@@ -1,4 +1,6 @@
+import { Link } from 'react-router-dom'
 import { formatMoney, formatNumber } from '../utils/format'
+import StockBadge from './StockBadge'
 
 /**
  * Read-only table of products with Edit / Delete actions.
@@ -21,7 +23,8 @@ function ProductTable({ products, onEdit, onDelete }) {
             <th>Category</th>
             <th>Supplier</th>
             <th className="num">Unit price</th>
-            <th className="num">In stock</th>
+            <th className="num">Quantity</th>
+            <th>Status</th>
             <th className="num">Reorder level</th>
             <th className="actions">Actions</th>
           </tr>
@@ -38,8 +41,14 @@ function ProductTable({ products, onEdit, onDelete }) {
               <td>{product.supplier_name || <span className="muted">—</span>}</td>
               <td className="num">{formatMoney(product.unit_price)}</td>
               <td className="num">{formatNumber(product.quantity_in_stock)}</td>
+              <td>
+                <StockBadge status={product.stock_status} />
+              </td>
               <td className="num">{formatNumber(product.reorder_level)}</td>
               <td className="actions">
+                <Link to={`/stock?product=${product.id}`} className="btn btn-small">
+                  History
+                </Link>
                 <button type="button" className="btn btn-small" onClick={() => onEdit(product)}>
                   Edit
                 </button>
